@@ -17,9 +17,7 @@
  */
 package org.magnum.dataup;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.util.Map;
 import java.util.Collection;
 import java.util.HashMap;
@@ -37,39 +35,39 @@ import org.springframework.web.server.ResponseStatusException;
 
 import javax.servlet.http.HttpServletResponse;
 
+/**
+ * You will need to create one or more Spring controllers to fulfill the
+ * requirements of the assignment. If you use this file, please rename it
+ * to something other than "AnEmptyController"
+ *
+ *
+ * ________ ________ ________ ________ ___ ___ ___ ________ ___ __
+ * |\ ____\|\ __ \|\ __ \|\ ___ \ |\ \ |\ \|\ \|\ ____\|\ \|\ \
+ * \ \ \___|\ \ \|\ \ \ \|\ \ \ \_|\ \ \ \ \ \ \ \\\ \ \ \___|\ \ \/ /|_
+ * \ \ \ __\ \ \\\ \ \ \\\ \ \ \ \\ \ \ \ \ \ \ \\\ \ \ \ \ \ ___ \
+ * \ \ \|\ \ \ \\\ \ \ \\\ \ \ \_\\ \ \ \ \____\ \ \\\ \ \ \____\ \ \\ \ \
+ * \ \_______\ \_______\ \_______\ \_______\ \ \_______\ \_______\ \_______\
+ * \__\\ \__\
+ * \|_______|\|_______|\|_______|\|_______| \|_______|\|_______|\|_______|\|__|
+ * \|__|
+ *
+ *
+ */
 @Controller
 public class VideoController {
 	private static final AtomicLong currentId = new AtomicLong(0L);
 	private Map<Long, Video> videos = new HashMap<>();
 
-	VideoController() {
-		Long id = currentId.incrementAndGet();
+	// Sample Data for Testing
+	VideoController() throws IOException {
 		Video video = Video.create().withContentType("video/mpeg")
 						.withDuration(300).withSubject("Mobile Cloud")
 						.withTitle("Programming Cloud Services for ...")
 						.build();
-		video.setId(id);
-		video.setDataUrl("http://localhost:8080/video/" + id + "/data");
-		videos.put(id, video);
+		video.setId(10L);
+		video.setDataUrl("http://localhost:8080/video/" + 10 + "/data");
+		videos.put(10L, video);
 	}
-	/**
-	 * You will need to create one or more Spring controllers to fulfill the
-	 * requirements of the assignment. If you use this file, please rename it
-	 * to something other than "AnEmptyController"
-	 * 
-	 * 
-	 * ________ ________ ________ ________ ___ ___ ___ ________ ___ __
-	 * |\ ____\|\ __ \|\ __ \|\ ___ \ |\ \ |\ \|\ \|\ ____\|\ \|\ \
-	 * \ \ \___|\ \ \|\ \ \ \|\ \ \ \_|\ \ \ \ \ \ \ \\\ \ \ \___|\ \ \/ /|_
-	 * \ \ \ __\ \ \\\ \ \ \\\ \ \ \ \\ \ \ \ \ \ \ \\\ \ \ \ \ \ ___ \
-	 * \ \ \|\ \ \ \\\ \ \ \\\ \ \ \_\\ \ \ \ \____\ \ \\\ \ \ \____\ \ \\ \ \
-	 * \ \_______\ \_______\ \_______\ \_______\ \ \_______\ \_______\ \_______\
-	 * \__\\ \__\
-	 * \|_______|\|_______|\|_______|\|_______| \|_______|\|_______|\|_______|\|__|
-	 * \|__|
-	 * 
-	 * 
-	 */
 
 	@RequestMapping(value = "/video", method = RequestMethod.GET)
 	public @ResponseBody Collection<Video> getVideoList() {
@@ -77,49 +75,55 @@ public class VideoController {
 	}
 
 	@RequestMapping(value = "/video/{id}/data", method = RequestMethod.GET)
-	public @ResponseBody ResponseEntity<Video> getVideoData(@PathVariable Long id, HttpServletResponse resp) {
+	public void getVideoData(@PathVariable Long id, HttpServletResponse resp) {
 		if (!videos.containsKey(id)) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "video not found");
 		}
-		try {
+		try (OutputStream outStream = resp.getOutputStream()){
 			Video v = videos.get(id);
 			VideoFileManager videoFileManager = VideoFileManager.get();
-			OutputStream outStream = resp.getOutputStream();
 			videoFileManager.copyVideoData(v, outStream);
 			outStream.flush();
 			outStream.close();
-			return new ResponseEntity<Video>(HttpStatus.OK);
+			resp.setStatus(HttpServletResponse.SC_OK);
 		} catch (Exception e) {
 			e.printStackTrace();
-			return new ResponseEntity<Video>(HttpStatus.NOT_FOUND);
+			resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
 		}
+	}
+
+	@RequestMapping(value = "/video/{id}/data", method = RequestMethod.POST)
+	public @ResponseBody VideoStatus setVideoData(
+			@PathVariable Long id,
+			@RequestBody MultipartFile videoData)  {
+		if (!videos.containsKey(id)) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "video not found");
+		}
+		VideoStatus videoStatus = new VideoStatus(VideoState.PROCESSING);
+		if (videoData != null) {
+			try (InputStream inputStream = videoData.getInputStream()){
+				VideoFileManager videoFileManager = VideoFileManager.get();
+				Video video = this.videos.get(id);
+				videoFileManager.saveVideoData(video, inputStream);
+				videoStatus.setState(VideoState.READY);
+			} catch (Exception e) {
+				e.printStackTrace();
+				throw new ResponseStatusException(HttpStatus.NOT_FOUND, "video not found");
+			}
+		} else {
+			videoStatus.setState(VideoState.READY);
+		}
+
+		return videoStatus;
 	}
 
 	@RequestMapping(value = "/video", method = RequestMethod.POST)
 	public @ResponseBody Video addVideo(@RequestBody() Video v) {
 		Long id = currentId.incrementAndGet();
 		v.setId(id);
+		v.setDataUrl("/video/" + id + "/data");
+		v.setContentType("multipart/form-data");
 		this.videos.put(id, v);
 		return v;
-	}
-
-	@RequestMapping(value = "/video/{id}/data", method = RequestMethod.POST)
-	public @ResponseBody VideoStatus setVideoData(
-			@PathVariable Long id,
-			@RequestBody MultipartFile videoData) throws IOException {
-		if (!videos.containsKey(id)) {
-			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "video not found");
-		}
-		VideoStatus videoStatus = new VideoStatus(VideoState.PROCESSING);
-		VideoFileManager videoFileManager = VideoFileManager.get();
-		try (InputStream inputStream = videoData.getInputStream()){
-			Video video = this.videos.get(id);
-			videoFileManager.saveVideoData(video, inputStream);
-			this.videos.put(video.getId(), video);
-			videoStatus.setState(VideoState.READY);
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
-		return videoStatus;
 	}
 }
